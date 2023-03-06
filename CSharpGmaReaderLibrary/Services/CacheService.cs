@@ -15,7 +15,7 @@ namespace CSharpGmaReaderLibrary.Services
         {
             string? fileName = await CalculateFileMD5Hash(filePath);
             if (fileName == null) return null;
-            return Path.Combine(GetCacheDirectoryPath("headers"), fileName + ".json");
+            return Path.Combine(GetCacheDirectoryPath("headers"), "cache.json");
         }
 
         public static async Task<string?> CalculateFileMD5Hash(string filePath)

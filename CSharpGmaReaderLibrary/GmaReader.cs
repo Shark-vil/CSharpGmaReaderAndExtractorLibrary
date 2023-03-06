@@ -5,7 +5,7 @@ using static CSharpGmaReaderLibrary.Models.Events.ProgressEvents;
 
 namespace CSharpGmaReaderLibrary
 {
-    public class GmaReader
+    public class GmaReader : IDisposable
     {
         public event ProgressChanged? e_ReadFilesProgressChanged;
         public event ProgressCompleted? e_ReadFilesCompeted;
@@ -14,22 +14,42 @@ namespace CSharpGmaReaderLibrary
         private const string _dupIdEnt = "DUP3";
         private const char _addonFormatVersion = (char)3;
 
+        private static object _lock = new object();
+        private AddonInfoCacheModel? _cacheObject = null;
+
         public async Task<AddonInfoModel?> ReadHeaderAsync(string filePath, ReadHeaderOptions? options = null)
         {
             filePath = await GetReadingFilePathAsync(filePath);
 
             AddonInfoModel? addonInfo = null;
+            string? headerCacheFile = null;
+
             options = options ?? new ReadHeaderOptions();
 
-            string? headerCacheFile = await CacheService.GetHeaderFileInCachePath(filePath);
-            if (headerCacheFile != null && File.Exists(headerCacheFile))
+            if (!options.ReadCacheSingleTime || _cacheObject == null)
             {
-                string headerContent = await File.ReadAllTextAsync(headerCacheFile);
-                try
+                headerCacheFile = await CacheService.GetHeaderFileInCachePath(filePath);
+                if (headerCacheFile == null || !File.Exists(headerCacheFile))
                 {
-                    addonInfo = Newtonsoft.Json.JsonConvert.DeserializeObject<AddonInfoModel>(headerContent);
+                    _cacheObject = new AddonInfoCacheModel();
                 }
-                catch { }
+                else
+                {
+                    string? addonFileHash = await CacheService.CalculateFileMD5Hash(filePath);
+                    string jsonString = await File.ReadAllTextAsync(headerCacheFile);
+                    try
+                    {
+                        AddonInfoCacheModel? cacheInfo = Newtonsoft.Json.JsonConvert.DeserializeObject<AddonInfoCacheModel>(jsonString);
+                        if (cacheInfo != null)
+                        {
+                            _cacheObject = cacheInfo;
+                            addonInfo = _cacheObject.Cache
+                                .Where(x => x.AddonFileHash == addonFileHash)
+                                .FirstOrDefault();
+                        }
+                    }
+                    catch { }
+                }
             }
 
             if (addonInfo == null)
@@ -46,12 +66,17 @@ namespace CSharpGmaReaderLibrary
                         addonInfo = await GetHeaderReader(reader, filePath, options);
                 }
 
-                if (addonInfo != null && headerCacheFile != null)
+                if (_cacheObject != null && addonInfo != null && headerCacheFile != null)
                 {
+                    _cacheObject.Cache.Add(addonInfo);
+
                     try
                     {
-                        string headerContent = Newtonsoft.Json.JsonConvert.SerializeObject(addonInfo);
-                        await File.WriteAllTextAsync(headerCacheFile, headerContent);
+                        string jsonString = Newtonsoft.Json.JsonConvert.SerializeObject(_cacheObject);
+                        lock (_lock)
+                        {
+                            File.WriteAllText(headerCacheFile, jsonString);
+                        }
                     }
                     catch { }
                 }
@@ -199,7 +224,7 @@ namespace CSharpGmaReaderLibrary
         public async Task ReadFileContentAsync(string filePath, Func<FileContentModel, Task> handler, ReadFileContentOptions? options = null)
         {
             options = options ?? new ReadFileContentOptions();
-            AddonInfoModel? addonInfo = options.AddonInfo ?? await ReadHeaderAsync(filePath);
+            AddonInfoModel? addonInfo = options.AddonInfo ?? await ReadHeaderAsync(filePath, options.HeaderOptions);
 
             if (addonInfo == null)
                 throw new NullReferenceException();
@@ -292,6 +317,13 @@ namespace CSharpGmaReaderLibrary
             }
 
             return true;
+        }
+
+        public void Dispose()
+        {
+            e_ReadFilesProgressChanged = null;
+            e_ReadFilesCompeted = null;
+            _cacheObject = null;
         }
     }
 }

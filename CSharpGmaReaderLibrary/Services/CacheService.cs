@@ -4,21 +4,19 @@ namespace CSharpGmaReaderLibrary.Services
 {
     public class CacheService
     {
-        public static async Task<string?> GetAddonFileInCachePath(string filePath)
+        public static async Task<string?> GetAddonFileInCachePathAsync(string filePath)
         {
-            string? fileName = await CalculateFileMD5Hash(filePath);
+            string? fileName = await CalculateFileMD5HashAsync(filePath);
             if (fileName == null) return null;
             return Path.Combine(GetCacheDirectoryPath("gma"), fileName + ".gma");
         }
 
-        public static async Task<string?> GetHeaderFileInCachePath(string filePath)
+        public static string GetHeaderFileInCachePath()
         {
-            string? fileName = await CalculateFileMD5Hash(filePath);
-            if (fileName == null) return null;
             return Path.Combine(GetCacheDirectoryPath("headers"), "cache.json");
         }
 
-        public static async Task<string?> CalculateFileMD5Hash(string filePath)
+        public static async Task<string?> CalculateFileMD5HashAsync(string filePath)
         {
             byte[]? fileHashBytes = null;
 

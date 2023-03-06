@@ -1,6 +1,7 @@
 ﻿using CSharpGmaReaderLibrary.Exceptions;
 using CSharpGmaReaderLibrary.Models;
 using CSharpGmaReaderLibrary.Services;
+using System.Data.SqlTypes;
 using static CSharpGmaReaderLibrary.Models.Events.ProgressEvents;
 
 namespace CSharpGmaReaderLibrary
@@ -16,40 +17,26 @@ namespace CSharpGmaReaderLibrary
 
         private static object _lock = new object();
         private AddonInfoCacheModel? _cacheObject = null;
+        private string _headerCacheFilePath = CacheService.GetHeaderFileInCachePath();
 
         public async Task<AddonInfoModel?> ReadHeaderAsync(string filePath, ReadHeaderOptions? options = null)
         {
             filePath = await GetReadingFilePathAsync(filePath);
 
             AddonInfoModel? addonInfo = null;
-            string? headerCacheFile = null;
+            string? addonFileHash = await CacheService.CalculateFileMD5HashAsync(filePath);
+
+            if (addonFileHash == null)
+                return null;
 
             options = options ?? new ReadHeaderOptions();
 
             if (!options.ReadCacheSingleTime || _cacheObject == null)
             {
-                headerCacheFile = await CacheService.GetHeaderFileInCachePath(filePath);
-                if (headerCacheFile == null || !File.Exists(headerCacheFile))
-                {
-                    _cacheObject = new AddonInfoCacheModel();
-                }
-                else
-                {
-                    string? addonFileHash = await CacheService.CalculateFileMD5Hash(filePath);
-                    string jsonString = await File.ReadAllTextAsync(headerCacheFile);
-                    try
-                    {
-                        AddonInfoCacheModel? cacheInfo = Newtonsoft.Json.JsonConvert.DeserializeObject<AddonInfoCacheModel>(jsonString);
-                        if (cacheInfo != null)
-                        {
-                            _cacheObject = cacheInfo;
-                            addonInfo = _cacheObject.Cache
-                                .Where(x => x.AddonFileHash == addonFileHash)
-                                .FirstOrDefault();
-                        }
-                    }
-                    catch { }
-                }
+                _cacheObject = ReadCacheFromFile(_headerCacheFilePath);
+                addonInfo = _cacheObject.Cache
+                    .Where(x => x.AddonFileHash == addonFileHash)
+                    .FirstOrDefault();
             }
 
             if (addonInfo == null)
@@ -65,24 +52,64 @@ namespace CSharpGmaReaderLibrary
                     using (var reader = new BinaryReader(stream))
                         addonInfo = await GetHeaderReader(reader, filePath, options);
                 }
+            }
 
-                if (_cacheObject != null && addonInfo != null && headerCacheFile != null)
+            if (_cacheObject != null && addonInfo != null && _headerCacheFilePath != null && !_cacheObject.Cache.Exists(x => x.AddonFileHash == addonFileHash))
+            {
+                lock (_lock)
                 {
                     _cacheObject.Cache.Add(addonInfo);
-
-                    try
-                    {
-                        string jsonString = Newtonsoft.Json.JsonConvert.SerializeObject(_cacheObject);
-                        lock (_lock)
-                        {
-                            File.WriteAllText(headerCacheFile, jsonString);
-                        }
-                    }
-                    catch { }
                 }
+                WriteCacheToFile(_headerCacheFilePath, _cacheObject);
             }
 
             return addonInfo;
+        }
+
+        private void WriteCacheToFile(string headerCacheFile, AddonInfoCacheModel cacheInfo)
+        {
+            string? jsonString = null;
+
+            try
+            {
+                jsonString = Newtonsoft.Json.JsonConvert.SerializeObject(cacheInfo);
+            }
+            catch { }
+
+            if (jsonString != null)
+            {
+                lock (_lock)
+                {
+                    File.WriteAllText(headerCacheFile, jsonString);
+                }
+            }
+        }
+
+        private AddonInfoCacheModel ReadCacheFromFile(string? headerCacheFile)
+        {
+            var cacheInfoResult = new AddonInfoCacheModel();
+
+            if (headerCacheFile == null || !File.Exists(headerCacheFile))
+                return cacheInfoResult;
+
+            string? jsonString = null;
+            lock (_lock)
+            {
+                jsonString = File.ReadAllText(headerCacheFile);
+            }
+
+            if (jsonString != null)
+            {
+                try
+                {
+                    AddonInfoCacheModel? cacheInfo = Newtonsoft.Json.JsonConvert.DeserializeObject<AddonInfoCacheModel>(jsonString);
+                    if (cacheInfo != null)
+                        cacheInfoResult = cacheInfo;
+                }
+                catch { }
+            }
+
+            return cacheInfoResult;
         }
 
         private async Task<string> GetReadingFilePathAsync(string filePath)
@@ -96,7 +123,7 @@ namespace CSharpGmaReaderLibrary
             bool isLZMA = Path.GetExtension(filePath) == ".bin";
             if (isLZMA)
             {
-                string? tempFilePath = await CacheService.GetAddonFileInCachePath(filePath);
+                string? tempFilePath = await CacheService.GetAddonFileInCachePathAsync(filePath);
                 if (tempFilePath == null)
                     throw new GmaReaderException($"File {tempFilePath} not exists");
 
@@ -196,7 +223,7 @@ namespace CSharpGmaReaderLibrary
                 fileBlock = (ulong)reader.BaseStream.Position;
             }
 
-            string? fileHash = await CacheService.CalculateFileMD5Hash(filePath);
+            string? fileHash = await CacheService.CalculateFileMD5HashAsync(filePath);
             await Task.Yield();
 
             if (fileHash == null)

@@ -1,4 +1,7 @@
 ﻿using CSharpGmaReaderLibrary.Models;
+using System;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using static CSharpGmaReaderLibrary.Models.Events.ProgressEvents;
 
 namespace CSharpGmaReaderLibrary
@@ -15,8 +18,8 @@ namespace CSharpGmaReaderLibrary
 
         public GmaExtractor(string extractFolderPath)
         {
-            _extractFolderPath = extractFolderPath;
-        }
+			_extractFolderPath = extractFolderPath;
+		}
 
         private async Task<string?> ExtractFileHandlerAsync(FileContentModel addonFile, ExtractFileOptions? options)
         {
@@ -31,7 +34,7 @@ namespace CSharpGmaReaderLibrary
             string pasteDirectoryPath = Path.Combine(_extractFolderPath, fileDirectoryPath);
             string pasteFilePath = Path.Combine(_extractFolderPath, addonFile.FilePath);
 
-            if (!Directory.Exists(pasteDirectoryPath))
+			if (!Directory.Exists(pasteDirectoryPath))
                 Directory.CreateDirectory(pasteDirectoryPath);
 
             if (addonFile.Bytes != null && (!File.Exists(pasteFilePath) || options.RewriteExistsFiles))
@@ -75,7 +78,7 @@ namespace CSharpGmaReaderLibrary
 
         public async Task<string?> MakeDescriptionFile(AddonInfoModel addonInfo)
         {
-            if (addonInfo.Description == null)
+            if (string.IsNullOrWhiteSpace(addonInfo.Description))
                 return null;
          
             bool isJsonDescriptionContent;
@@ -89,15 +92,16 @@ namespace CSharpGmaReaderLibrary
                 isJsonDescriptionContent = false;
             }
 
-
             string outputFilePath;
+
             if (isJsonDescriptionContent)
                 outputFilePath = Path.Combine(_extractFolderPath, "description.json");
             else
                 outputFilePath = Path.Combine(_extractFolderPath, "description.txt");
 
             await File.WriteAllTextAsync(outputFilePath, addonInfo.Description);
-            return outputFilePath;
+
+			return outputFilePath;
         }
     }
 }

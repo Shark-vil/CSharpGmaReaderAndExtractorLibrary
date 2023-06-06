@@ -1,45 +1,35 @@
 ﻿using CSharpGmaReaderLibrary.Exceptions;
 using CSharpGmaReaderLibrary.Models;
 using CSharpGmaReaderLibrary.Services;
-using static CSharpGmaReaderLibrary.Models.Events.ProgressEvents;
 
 namespace CSharpGmaReaderLibrary
 {
-    public partial class GmaReader : IDisposable
+    /*
+    public partial class GmaReader
     {
-        public event ProgressChanged? e_ReadFilesProgressChanged;
-        public event ProgressCompleted? e_ReadFilesCompeted;
+        private static object _lockerSynchronously = new object();
+        //private AddonInfoCacheModel? _cacheObjectSynchronously = null;
+        private string _headerCacheFilePathSynchronously = CacheService.GetHeaderSingleFileInCachePath();
 
-        private const string _addonIdEnt = "GMAD";
-        private const string _dupIdEnt = "DUP3";
-        private const char _addonFormatVersion = (char)3;
-
-        public async Task<AddonInfoModel?> ReadHeaderAsync(string filePath, ReadHeaderOptions? options = null)
+        public AddonInfoModel? ReadHeader(string filePath, ReadHeaderOptions? options = null)
         {
-#if DEBUG
-			Console.WriteLine("\n");
-#endif
-			filePath = Path.GetFullPath(filePath);
-			filePath = await GetReadingFilePathAsync(filePath);
-#if DEBUG
-			Console.WriteLine(string.Format("[ReadHeaderAsync] Reading file path: {0}", filePath));
-#endif
-			options = options ?? new ReadHeaderOptions();
+            filePath = GetReadingFilePath(filePath);
 
             AddonInfoModel? addonInfo = null;
-            string? headerCacheFilePath = null;
+            string? addonFileHash = CacheService.CalculateFileMD5Hash(filePath);
 
-            if (options.UseCache)
-            {
-                headerCacheFilePath = CacheService.GetHeaderFileInCachePath(filePath);
-#if DEBUG
-				Console.WriteLine(string.Format("[ReadHeaderAsync] Read header cache: {0}", headerCacheFilePath));
-#endif
-				if (headerCacheFilePath == null)
-                    return null;
+            if (addonFileHash == null)
+                return null;
 
-                addonInfo = await ReadCacheFromFileAsync(headerCacheFilePath);
-            }
+            options = options ?? new ReadHeaderOptions();
+
+            //if (!options.ReadCacheSingleTime || _cacheObjectSynchronously == null)
+            //{
+            //    _cacheObjectSynchronously = ReadCacheFromFile(_headerCacheFilePathSynchronously);
+            //    addonInfo = _cacheObjectSynchronously.Cache
+            //        .Where(x => x.AddonFileHash == addonFileHash)
+            //        .FirstOrDefault();
+            //}
 
             if (addonInfo == null)
             {
@@ -51,32 +41,29 @@ namespace CSharpGmaReaderLibrary
                     stream.Seek(0, SeekOrigin.Begin);
 
                     using (var reader = new BinaryReader(stream))
-                    {
-						//addonInfo = await GetHeaderReaderAsync(reader, filePath, options);
-						addonInfo = GetHeaderReader(reader, filePath, options);
-					}
-
-                    if (addonInfo == null || string.IsNullOrWhiteSpace(addonInfo.Name) || addonInfo.FormatVersion == 0 || addonInfo.AddonVersion == 0)
-						throw new Exception("Failed to read the addon");
+                        addonInfo = GetHeaderReader(reader, filePath, options);
                 }
-#if DEBUG
-				Console.WriteLine(string.Format("[ReadHeaderAsync] Complete reading addon info: {0}", Path.GetFileName(filePath)));
-#endif
-			}
-
-            if (options.UseCache && addonInfo != null && headerCacheFilePath != null && (
-                options.RewriteExistsCache || !File.Exists(headerCacheFilePath)
-            ))
-            {
-                await WriteCacheToFileAsync(headerCacheFilePath, addonInfo);
             }
-#if DEBUG
-            Console.WriteLine("\n");
-#endif
-			return addonInfo;
+
+            //if (
+            //    _cacheObjectSynchronously != null && 
+            //    addonInfo != null && 
+            //    _headerCacheFilePathSynchronously != null && 
+            //    (options.RewriteExistsCache || !_cacheObjectSynchronously.Cache.Exists(x => x.AddonFileHash == addonFileHash && x.Timestamp == addonInfo.Timestamp))
+            //)
+            //{
+            //    lock (_lockerSynchronously)
+            //    {
+            //        _cacheObjectSynchronously.Cache.Add(addonInfo);
+            //    }
+
+            //    WriteCacheToFile(_headerCacheFilePathSynchronously, _cacheObjectSynchronously);
+            //}
+
+            return addonInfo;
         }
 
-        private async Task WriteCacheToFileAsync(string headerCacheFile, AddonInfoModel cacheInfo)
+        private void WriteCacheToFile(string headerCacheFile, AddonInfoCacheModel cacheInfo)
         {
             string? jsonString = null;
 
@@ -85,42 +72,44 @@ namespace CSharpGmaReaderLibrary
                 jsonString = Newtonsoft.Json.JsonConvert.SerializeObject(cacheInfo);
             }
             catch { }
-            finally
-            {
-                await Task.Yield();
-            }
 
             if (jsonString != null)
-                await File.WriteAllTextAsync(headerCacheFile, jsonString);
+            {
+                lock (_lockerSynchronously)
+                {
+                    File.WriteAllText(headerCacheFile, jsonString);
+                }
+            }
         }
 
-        private async Task<AddonInfoModel?> ReadCacheFromFileAsync(string? headerCacheFile)
+        private AddonInfoCacheModel ReadCacheFromFile(string? headerCacheFile)
         {
-            AddonInfoModel? cacheInfoResult = null;
+            var cacheInfoResult = new AddonInfoCacheModel();
 
             if (headerCacheFile == null || !File.Exists(headerCacheFile))
-                return null;
+                return cacheInfoResult;
 
-            string? jsonString = await File.ReadAllTextAsync(headerCacheFile);
+            string? jsonString = null;
+            lock (_lockerSynchronously)
+            {
+                jsonString = File.ReadAllText(headerCacheFile);
+            }
+
             if (jsonString != null)
             {
                 try
                 {
-                    AddonInfoModel? cacheInfo = Newtonsoft.Json.JsonConvert.DeserializeObject<AddonInfoModel>(jsonString);
+                    AddonInfoCacheModel? cacheInfo = Newtonsoft.Json.JsonConvert.DeserializeObject<AddonInfoCacheModel>(jsonString);
                     if (cacheInfo != null)
                         cacheInfoResult = cacheInfo;
                 }
                 catch { }
-                finally
-                {
-                    await Task.Yield();
-                }
             }
 
             return cacheInfoResult;
         }
 
-        private async Task<string> GetReadingFilePathAsync(string filePath)
+        private string GetReadingFilePath(string filePath)
         {
             if (string.IsNullOrEmpty(filePath))
                 throw new GmaReaderException($"File path string is empty");
@@ -128,27 +117,16 @@ namespace CSharpGmaReaderLibrary
             if (!File.Exists(filePath))
                 throw new GmaReaderException($"File {filePath} not exists");
 
-#if DEBUG
-			Console.WriteLine(string.Format("[GetReadingFilePathAsync] Run GetReadingFilePathAsync({0})", filePath));
-#endif
-
-			bool isLZMA = Path.GetExtension(filePath) == ".bin";
-#if DEBUG
-			Console.WriteLine(string.Format("[GetReadingFilePathAsync] File is LZMA: {0}", isLZMA));
-#endif
-			if (isLZMA)
+            bool isLZMA = Path.GetExtension(filePath) == ".bin";
+            if (isLZMA)
             {
                 string? tempFilePath = CacheService.GetAddonFileInCachePath(filePath);
                 if (tempFilePath == null)
                     throw new GmaReaderException($"File {tempFilePath} not exists");
 
-#if DEBUG
-				Console.WriteLine(string.Format("[GetReadingFilePathAsync] LZMA file temp path: {0}", tempFilePath));
-#endif
-
-				if (!File.Exists(tempFilePath))
+                if (!File.Exists(tempFilePath))
                 {
-					bool isDecode = await DecodeLZMAAsync(filePath, tempFilePath);
+                    bool isDecode = DecodeLZMAA(filePath, tempFilePath);
                     if (!isDecode || !File.Exists(tempFilePath))
                         throw new GmaReaderException("Failed lazma decode");
                 }
@@ -159,13 +137,9 @@ namespace CSharpGmaReaderLibrary
             return filePath;
         }
 
-		//private async Task<AddonInfoModel?> GetHeaderReaderAsync(BinaryReader reader, string filePath, ReadHeaderOptions options)
-		private AddonInfoModel? GetHeaderReader(BinaryReader reader, string filePath, ReadHeaderOptions options)
-		{
-#if DEBUG
-			Console.WriteLine(string.Format("[GetHeaderReaderAsync] Run GetHeaderReaderAsync({0})", filePath));
-#endif
-			char[] gmadCharTag = reader.ReadChars(_addonIdEnt.Length);
+        private AddonInfoModel? GetHeaderReader(BinaryReader reader, string filePath, ReadHeaderOptions options)
+        {
+            char[] gmadCharTag = reader.ReadChars(_addonIdEnt.Length);
             string gmadStringTag = string.Join(string.Empty, gmadCharTag);
 
             if (gmadStringTag == _dupIdEnt)
@@ -191,7 +165,9 @@ namespace CSharpGmaReaderLibrary
                 content = reader.ReadNullTerminatedString();
 
                 while (content != string.Empty)
+                {
                     content = reader.ReadNullTerminatedString();
+                }
             }
 
             string name = reader.ReadNullTerminatedString();
@@ -225,10 +201,10 @@ namespace CSharpGmaReaderLibrary
                 fileBlock = (ulong)reader.BaseStream.Position;
             }
 
-            //string? fileHash = await CacheService.CalculateFileMD5HashAsync(filePath);
+            string? fileHash = CacheService.CalculateFileMD5Hash(filePath);
 
-            //if (fileHash == null)
-            //    throw new GmaReaderException($"Make md5 hash failed: {filePath}");
+            if (fileHash == null)
+                throw new GmaReaderException($"Make md5 hash failed: {filePath}");
 
             var addonInfo = new AddonInfoModel
             {
@@ -249,10 +225,10 @@ namespace CSharpGmaReaderLibrary
             return addonInfo;
         }
 
-        public async Task ReadFileContentAsync(string filePath, Func<FileContentModel, Task> handler, ReadFileContentOptions? options = null)
+        public void ReadFileContent(string filePath, Func<FileContentModel, Task> handler, ReadFileContentOptions? options = null)
         {
             options = options ?? new ReadFileContentOptions();
-            AddonInfoModel? addonInfo = options.AddonInfo ?? await ReadHeaderAsync(filePath, options.HeaderOptions);
+            AddonInfoModel? addonInfo = options.AddonInfo ?? ReadHeader(filePath, options.HeaderOptions);
 
             if (addonInfo == null)
                 throw new NullReferenceException();
@@ -283,9 +259,8 @@ namespace CSharpGmaReaderLibrary
                             byte[] read_buffer = new byte[(long)entry.Size];
 
                             stream.Seek((long)addonInfo.FileBlock + (long)entry.Offset, SeekOrigin.Begin);
-
-                            await stream.ReadAsync(read_buffer, 0, (int)entry.Size);
-                            await tempBuffer.WriteAsync(read_buffer, 0, read_buffer.Length);
+                            stream.Read(read_buffer, 0, (int)entry.Size);
+                            tempBuffer.Write(read_buffer, 0, read_buffer.Length);
 
                             var fileInfo = new FileContentModel
                             {
@@ -293,7 +268,7 @@ namespace CSharpGmaReaderLibrary
                                 Bytes = tempBuffer.ToArray(),
                             };
 
-                            await handler.Invoke(fileInfo);
+                            handler.Invoke(fileInfo);
                         }
 
                         double currentPercent = percentRelationship * (index + 1);
@@ -305,22 +280,19 @@ namespace CSharpGmaReaderLibrary
             e_ReadFilesCompeted?.Invoke(this);
         }
 
-        private async Task<bool> DecodeLZMAAsync(string fileInputPath, string fileOutputPath)
+        private bool DecodeLZMAA(string fileInputPath, string fileOutputPath)
         {
-#if DEBUG
-			Console.WriteLine(string.Format("[DecodeLZMAAsync] Start LZMA decode: {0} -> {1}", fileInputPath, fileOutputPath));
-#endif
-			try
-			{
+            try
+            {
                 using (Stream input = File.OpenRead(fileInputPath))
                 {
                     input.Seek(0, SeekOrigin.Begin);
 
                     byte[] properties = new byte[5];
-                    await input.ReadAsync(properties, 0, 5);
+                    input.Read(properties, 0, 5);
 
                     byte[] fileLengthBytes = new byte[8];
-                    await input.ReadAsync(fileLengthBytes, 0, 8);
+                    input.Read(fileLengthBytes, 0, 8);
                     long fileLength = BitConverter.ToInt64(fileLengthBytes, 0);
 
                     var lzmaCoder = new SevenZip.Compression.LZMA.Decoder();
@@ -329,7 +301,7 @@ namespace CSharpGmaReaderLibrary
                     using (FileStream output = new FileStream(fileOutputPath, FileMode.Create))
                     {
                         lzmaCoder.Code(input, output, input.Length, fileLength, null);
-                        await output.FlushAsync();
+                        output.Flush();
                     }
                 }
             }
@@ -340,11 +312,6 @@ namespace CSharpGmaReaderLibrary
 
             return true;
         }
-
-        public void Dispose()
-        {
-            e_ReadFilesProgressChanged = null;
-            e_ReadFilesCompeted = null;
-        }
     }
+    */
 }

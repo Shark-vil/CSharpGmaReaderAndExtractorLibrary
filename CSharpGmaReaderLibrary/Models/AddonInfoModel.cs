@@ -5,11 +5,11 @@ namespace CSharpGmaReaderLibrary.Models
     [Serializable]
     public class AddonInfoModel
     {
-        [JsonIgnore]
-        public int Id { get; set; }
+        //[JsonProperty("addon_file_Hash")]
+        //public string? AddonFileHash { get; set; }
 
-        [JsonProperty("addon_file_Hash")]
-        public string? AddonFileHash { get; set; }
+        [JsonProperty("addon_id")]
+        public long? AddonId { get; set; }
 
         [JsonProperty("source_path")]
         public string? SourcePath { get; set; }
